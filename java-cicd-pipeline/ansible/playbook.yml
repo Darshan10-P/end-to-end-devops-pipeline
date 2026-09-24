@@ -1,0 +1,12 @@
+---
+- name: Configure Docker on build/deploy hosts
+  hosts: docker_hosts
+  become: true
+  roles:
+    - docker
+
+- name: Configure kubectl/AWS CLI on Jenkins agents
+  hosts: jenkins_agents
+  become: true
+  roles:
+    - k8s-agent

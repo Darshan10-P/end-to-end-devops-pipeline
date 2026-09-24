@@ -1,0 +1,106 @@
+pipeline {
+    agent any
+
+    tools {
+        maven 'Maven-3.9'
+        jdk 'JDK-17'
+    }
+
+    environment {
+        APP_NAME        = 'devops-demo-app'
+        DOCKERHUB_REPO  = "yourdockerhubuser/${APP_NAME}"
+        IMAGE_TAG       = "${env.BUILD_NUMBER}"
+        AWS_REGION      = 'ap-south-1'
+        EKS_CLUSTER     = 'devops-demo-cluster'
+        DOCKERHUB_CREDS = credentials('dockerhub-creds')
+        AWS_CREDS       = credentials('aws-creds')
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/<your-username>/java-cicd-pipeline.git'
+            }
+        }
+
+        stage('Build & Unit Test (Maven)') {
+            steps {
+                sh 'mvn clean verify'
+            }
+            post {
+                always {
+                    junit '**/target/surefire-reports/*.xml'
+                    jacoco execPattern: '**/target/jacoco.exec'
+                }
+            }
+        }
+
+        stage('Static Code Analysis') {
+            steps {
+                sh 'mvn checkstyle:check || true'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh "docker build -t ${DOCKERHUB_REPO}:${IMAGE_TAG} -t ${DOCKERHUB_REPO}:latest ."
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                sh """
+                    echo "${DOCKERHUB_CREDS_PSW}" | docker login -u "${DOCKERHUB_CREDS_USR}" --password-stdin
+                    docker push ${DOCKERHUB_REPO}:${IMAGE_TAG}
+                    docker push ${DOCKERHUB_REPO}:latest
+                """
+            }
+        }
+
+        stage('Provision Infra (Terraform)') {
+            steps {
+                dir('terraform') {
+                    sh """
+                        terraform init -input=false
+                        terraform plan -out=tfplan
+                        terraform apply -input=false -auto-approve tfplan
+                    """
+                }
+            }
+        }
+
+        stage('Configure Nodes (Ansible)') {
+            steps {
+                dir('ansible') {
+                    sh 'ansible-playbook -i inventory.ini playbook.yml'
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh """
+                    aws eks update-kubeconfig --name ${EKS_CLUSTER} --region ${AWS_REGION}
+                    sed -i 's|IMAGE_PLACEHOLDER|${DOCKERHUB_REPO}:${IMAGE_TAG}|g' k8s/deployment.yaml
+                    kubectl apply -f k8s/namespace.yaml
+                    kubectl apply -f k8s/deployment.yaml
+                    kubectl apply -f k8s/service.yaml
+                    kubectl rollout status deployment/${APP_NAME} -n devops-demo
+                """
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline succeeded: ${APP_NAME} build #${IMAGE_TAG} deployed."
+        }
+        failure {
+            echo 'Pipeline failed. Check console output.'
+        }
+        always {
+            sh 'docker system prune -f || true'
+        }
+    }
+}

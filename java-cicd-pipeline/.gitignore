@@ -1,0 +1,23 @@
+# Maven / Java
+target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/tfplan
+terraform/.terraform.lock.hcl
+
+# Ansible
+*.retry
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
